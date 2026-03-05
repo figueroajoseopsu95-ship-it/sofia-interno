@@ -1,0 +1,774 @@
+{
+  "name": "SOFIA - Router Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sofia-router",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "router-webhook-001",
+      "name": "Entrada Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "sofia-router-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-convid",
+              "name": "conversationId",
+              "value": "={{ $json.conversationId }}",
+              "type": "string"
+            },
+            {
+              "id": "set-userid",
+              "name": "userId",
+              "value": "={{ $json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "set-message",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "set-channel",
+              "name": "channel",
+              "value": "={{ $json.channel }}",
+              "type": "string"
+            },
+            {
+              "id": "set-histtext",
+              "name": "historyText",
+              "value": "={{ $json.history?.map(h => h.role.toUpperCase() + ': ' + h.content).join('\\n') || '[Sin historial]' }}",
+              "type": "string"
+            },
+            {
+              "id": "set-histjson",
+              "name": "historyJson",
+              "value": "={{ $json.history }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "router-set-001",
+      "name": "Extraer Contexto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-haiku-4-5-20251001",
+        "options": {
+          "maxTokens": 256,
+          "temperature": 0.1
+        }
+      },
+      "id": "router-llm-001",
+      "name": "Claude Haiku Clasificador",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [540, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REEMPLAZAR-CON-ID-CREDENCIAL",
+          "name": "Anthropic - SOFIA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "={{ $('Extraer Contexto').item.json.message }}",
+        "options": {
+          "systemMessage": "Eres el sistema de clasificación de SOFIA para Banesco Banco Universal. Clasifica el mensaje del empleado en EXACTAMENTE uno de estos dominios:\n\n- \"psd\": Productos y Servicios Digitales (banca digital, apps, transferencias, pagos online, tarjetas digitales, billeteras digitales)\n- \"pasivos\": Pasivos (cuentas de ahorro, cuentas corrientes, depósitos a plazo, certificados, tasas de interés)\n- \"atc\": Atención al Cliente (reclamos, quejas, procesos de atención, soporte, canales de servicio, SLAs)\n- \"finanzas\": Finanzas (pagos internos, tesorería, contabilidad, reportes financieros, administración)\n- \"comercial\": Comercial (banca empresarial, créditos comerciales, clientes corporativos, Banca de Empresas)\n- \"legal\": Legal y Compliance (SUDEBAN, BCV, AML, KYC, OFAC, normativas, prevención de lavado)\n- \"escalation\": Escalamiento (el usuario está muy frustrado, el problema es muy complejo o urgente, requiere supervisor humano)\n- \"general\": General (saludos, conversación casual, preguntas no bancarias)\n\nResponde ÚNICAMENTE con este JSON sin texto adicional:\n{\"domain\": \"<dominio>\", \"confidence\": <0.0-1.0>, \"reason\": \"<breve razón en español>\"}",
+          "maxIterations": 1
+        }
+      },
+      "id": "router-agent-001",
+      "name": "Clasificador SOFIA",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentOutput = $input.first().json;\n\nlet outputText = '';\nif (agentOutput.output) {\n  outputText = agentOutput.output;\n} else if (agentOutput.text) {\n  outputText = agentOutput.text;\n} else {\n  outputText = JSON.stringify(agentOutput);\n}\n\nlet domain = 'general';\nlet confidence = 0.5;\nlet reason = 'No se pudo clasificar, usando dominio por defecto';\n\ntry {\n  const jsonMatch = outputText.match(/\\{[\\s\\S]*?\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    domain = parsed.domain || 'general';\n    confidence = parsed.confidence || 0.5;\n    reason = parsed.reason || '';\n  } else {\n    const directParsed = JSON.parse(outputText);\n    domain = directParsed.domain || 'general';\n    confidence = directParsed.confidence || 0.5;\n    reason = directParsed.reason || '';\n  }\n} catch (e) {\n  domain = 'general';\n  confidence = 0.3;\n  reason = 'Error al parsear clasificación: ' + e.message;\n}\n\nconst validDomains = ['psd', 'pasivos', 'atc', 'finanzas', 'comercial', 'legal', 'escalation', 'general'];\nif (!validDomains.includes(domain)) {\n  domain = 'general';\n}\n\nconst ctx = $('Extraer Contexto').item.json;\n\nreturn [\n  {\n    json: {\n      domain: domain,\n      confidence: confidence,\n      reason: reason,\n      conversationId: ctx.conversationId,\n      userId: ctx.userId,\n      message: ctx.message,\n      channel: ctx.channel,\n      historyText: ctx.historyText,\n      historyJson: ctx.historyJson\n    }\n  }\n];"
+      },
+      "id": "router-code-001",
+      "name": "Parsear Clasificación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "psd",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "psd"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "pasivos",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pasivos"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "atc",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "atc"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "finanzas",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "finanzas"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "comercial",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "comercial"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "legal",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "legal"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.domain }}",
+                    "rightValue": "escalation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "escalation"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      },
+      "id": "router-switch-001",
+      "name": "Switch Ruteo",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-psd",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-psd-001",
+      "name": "Agente PSD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-pasivos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-pasivos-001",
+      "name": "Agente Pasivos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-atc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-atc-001",
+      "name": "Agente ATC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-finanzas",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-finanzas-001",
+      "name": "Agente Finanzas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-comercial",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-comercial-001",
+      "name": "Agente Comercial",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-legal",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-legal-001",
+      "name": "Agente Legal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/sofia-escalation",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Contexto').item.json.conversationId, userId: $('Extraer Contexto').item.json.userId, message: $('Extraer Contexto').item.json.message, channel: $('Extraer Contexto').item.json.channel, history: $('Extraer Contexto').item.json.historyJson, classification: { domain: $('Parsear Clasificación').item.json.domain, confidence: $('Parsear Clasificación').item.json.confidence } }) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "router-http-escalation-001",
+      "name": "Agente Escalation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 600]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-response-general",
+              "name": "response",
+              "value": "Hola, soy SOFIA, tu asistente virtual de Banesco. ¿En qué puedo ayudarte hoy? Puedo ayudarte con información sobre productos digitales, cuentas, atención al cliente, procesos financieros y normativas.",
+              "type": "string"
+            },
+            {
+              "id": "set-agent-general",
+              "name": "agentName",
+              "value": "RouterAgent",
+              "type": "string"
+            },
+            {
+              "id": "set-sources-general",
+              "name": "sourcesCited",
+              "value": "=null",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "router-set-general-001",
+      "name": "Respuesta General",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1440, 700]
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "output": "first",
+        "options": {}
+      },
+      "id": "router-merge-001",
+      "name": "Unir Respuestas",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nlet response = '';\nlet agentName = 'RouterAgent';\nlet sourcesCited = null;\nlet tokenCount = 0;\nlet modelUsed = '';\nlet costUsd = 0;\n\nif (input.response) {\n  response = input.response;\n  agentName = input.agentName || 'SpecialistAgent';\n  sourcesCited = input.sourcesCited !== undefined ? input.sourcesCited : null;\n  tokenCount = input.tokenCount || Math.ceil(response.length / 3);\n  modelUsed = input.modelUsed || '';\n  costUsd = input.costUsd || 0;\n} else if (input.error) {\n  response = 'Lo siento, ocurrió un error procesando tu solicitud. Por favor intenta de nuevo o contacta a soporte.';\n  agentName = 'RouterAgent';\n  tokenCount = Math.ceil(response.length / 3);\n} else {\n  response = 'Lo siento, no pude procesar tu solicitud en este momento. Por favor intenta de nuevo.';\n  agentName = 'RouterAgent';\n  tokenCount = Math.ceil(response.length / 3);\n}\n\nreturn [\n  {\n    json: {\n      response: response,\n      agentName: agentName,\n      sourcesCited: sourcesCited,\n      tokenCount: tokenCount,\n      modelUsed: modelUsed,\n      costUsd: costUsd,\n      latencyMs: 0\n    }\n  }\n];"
+      },
+      "id": "router-code-final-001",
+      "name": "Formatear Respuesta Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "router-respond-001",
+      "name": "Responder a NestJS",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2100, 300]
+    }
+  ],
+  "connections": {
+    "Entrada Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extraer Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Contexto": {
+      "main": [
+        [
+          {
+            "node": "Clasificador SOFIA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku Clasificador": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Clasificador SOFIA",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificador SOFIA": {
+      "main": [
+        [
+          {
+            "node": "Parsear Clasificación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Clasificación": {
+      "main": [
+        [
+          {
+            "node": "Switch Ruteo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Ruteo": {
+      "main": [
+        [
+          {
+            "node": "Agente PSD",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Pasivos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente ATC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Finanzas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Comercial",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Legal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agente Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respuesta General",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente PSD": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Pasivos": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente ATC": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Finanzas": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Comercial": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Legal": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente Escalation": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respuesta General": {
+      "main": [
+        [
+          {
+            "node": "Unir Respuestas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unir Respuestas": {
+      "main": [
+        [
+          {
+            "node": "Formatear Respuesta Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Respuesta Final": {
+      "main": [
+        [
+          {
+            "node": "Responder a NestJS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-e5f6-4a8b-9c0d-e1f2a3b4c5d6",
+  "tags": [
+    {
+      "name": "SOFIA"
+    },
+    {
+      "name": "Router"
+    }
+  ],
+  "pinData": {}
+}

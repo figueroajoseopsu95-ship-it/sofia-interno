@@ -1,0 +1,514 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "knowledge", "audit", "audit_mirror"]
+}
+
+// --- PUBLIC ENUMS ---
+enum DocumentType {
+  V
+  E
+  J
+  P
+
+  @@map("document_type")
+  @@schema("public")
+}
+
+enum UserRole {
+  employee
+  supervisor
+  admin
+  superadmin
+
+  @@map("user_role")
+  @@schema("public")
+}
+
+enum UserStatus {
+  active
+  blocked
+  suspended
+  inactive
+
+  @@map("user_status")
+  @@schema("public")
+}
+
+enum ChannelType {
+  web
+  google_chat
+
+  @@map("channel_type")
+  @@schema("public")
+}
+
+enum ConversationStatus {
+  active
+  closed
+  archived
+
+  @@map("conversation_status")
+  @@schema("public")
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+
+  @@map("message_role")
+  @@schema("public")
+}
+
+enum FeedbackRating {
+  positive
+  negative
+
+  @@map("feedback_rating")
+  @@schema("public")
+}
+
+// --- KNOWLEDGE ENUMS ---
+enum FileType {
+  pdf
+  docx
+  xlsx
+  html
+  txt
+  pptx
+
+  @@map("file_type")
+  @@schema("knowledge")
+}
+
+enum DocumentStatus {
+  pending
+  processing
+  indexed
+  error
+  archived
+
+  @@map("document_status")
+  @@schema("knowledge")
+}
+
+enum ChunkType {
+  text
+  table
+  header
+  list
+  image_description
+
+  @@map("chunk_type")
+  @@schema("knowledge")
+}
+
+enum JobType {
+  full_ingestion
+  re_chunk
+  re_embed
+  ocr_only
+
+  @@map("job_type")
+  @@schema("knowledge")
+}
+
+enum JobStatus {
+  queued
+  processing
+  completed
+  failed
+
+  @@map("job_status")
+  @@schema("knowledge")
+}
+
+// --- PUBLIC MODELS ---
+
+model User {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeCode        String       @unique @map("employee_code") @db.VarChar(20)
+  documentType        DocumentType @map("document_type")
+  documentNumber      String       @unique @map("document_number") @db.VarChar(20)
+  firstName           String       @map("first_name") @db.VarChar(100)
+  lastName            String       @map("last_name") @db.VarChar(100)
+  email               String       @unique @db.VarChar(255)
+  phone               String?      @db.VarChar(20)
+  passwordHash        String       @map("password_hash") @db.VarChar(255)
+  role                UserRole     @default(employee)
+  position            String?      @db.VarChar(150)
+  status              UserStatus   @default(active)
+  lastLoginAt         DateTime?    @map("last_login_at") @db.Timestamptz
+  failedLoginAttempts Int          @default(0) @map("failed_login_attempts")
+  googleChatId        String?      @unique @map("google_chat_id") @db.VarChar(100)
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  departments   UserDepartment[]
+  conversations Conversation[]
+  feedbacks     Feedback[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+  @@schema("public")
+}
+
+model Department {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String       @unique @db.VarChar(150)
+  code        String       @unique @db.VarChar(20)
+  description String?
+  parentId    String?      @map("parent_id") @db.Uuid
+  parent      Department?  @relation("DepartmentToDepartment", fields: [parentId], references: [id])
+  children    Department[] @relation("DepartmentToDepartment")
+  isActive    Boolean      @default(true) @map("is_active")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  users UserDepartment[]
+
+  @@map("departments")
+  @@schema("public")
+}
+
+model UserDepartment {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  departmentId String   @map("department_id") @db.Uuid
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, departmentId])
+  @@map("user_departments")
+  @@schema("public")
+}
+
+model Conversation {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String             @map("user_id") @db.Uuid
+  channel      ChannelType        @default(web)
+  title        String?            @db.VarChar(255)
+  status       ConversationStatus @default(active)
+  currentAgent String?            @map("current_agent") @db.VarChar(100)
+  metadata     Json?              @db.JsonB
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  closedAt     DateTime?          @map("closed_at") @db.Timestamptz
+
+  user     User      @relation(fields: [userId], references: [id])
+  messages Message[]
+
+  @@map("conversations")
+  @@schema("public")
+}
+
+model Message {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        String
+  agentId        String?     @map("agent_id") @db.VarChar(100)
+  sourcesCited   Json?       @map("sources_cited") @db.JsonB
+  toolCalls      Json?       @map("tool_calls") @db.JsonB
+  tokenCount     Int?        @map("token_count")
+  latencyMs      Int?        @map("latency_ms")
+  modelUsed      String?     @map("model_used") @db.VarChar(50)
+  costUsd        Decimal?    @map("cost_usd") @db.Decimal(10, 6)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  feedbacks    Feedback[]
+
+  @@map("messages")
+  @@schema("public")
+}
+
+model Feedback {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId String         @map("message_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  rating    FeedbackRating
+  comment   String?
+  category  String?        @db.VarChar(50)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  message Message @relation(fields: [messageId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@map("feedback")
+  @@schema("public")
+}
+
+model RefreshToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  isRevoked Boolean  @default(false) @map("is_revoked")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+  @@schema("public")
+}
+
+// --- KNOWLEDGE MODELS ---
+
+model Collection {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String    @unique @db.VarChar(150)
+  code           String    @unique @db.VarChar(20)
+  description    String?
+  departmentId   String?   @map("department_id") @db.Uuid
+  embeddingModel String    @default("text-embedding-3-small") @map("embedding_model") @db.VarChar(50)
+  chunkStrategy  String?   @default("semantic") @map("chunk_strategy") @db.VarChar(50)
+  chunkSize      Int?      @default(512) @map("chunk_size")
+  chunkOverlap   Int?      @default(50) @map("chunk_overlap")
+  documentCount  Int?      @default(0) @map("document_count")
+  isActive       Boolean?  @default(true) @map("is_active")
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  documents Document[]
+
+  @@map("collections")
+  @@schema("knowledge")
+}
+
+model Document {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  collectionId     String          @map("collection_id") @db.Uuid
+  title            String          @db.VarChar(500)
+  originalFilename String          @map("original_filename") @db.VarChar(500)
+  fileType         FileType        @map("file_type")
+  fileSizeBytes    BigInt          @map("file_size_bytes")
+  filePath         String          @map("file_path") @db.VarChar(1000)
+  contentHash      String          @map("content_hash") @db.VarChar(64)
+  totalChunks      Int?            @default(0) @map("total_chunks")
+  totalPages       Int?            @map("total_pages")
+  ocrRequired      Boolean?        @default(false) @map("ocr_required")
+  ocrEngine        String?         @map("ocr_engine") @db.VarChar(20)
+  language         String?         @default("es") @db.VarChar(10)
+  version          Int?            @default(1)
+  status           DocumentStatus? @default(pending)
+  metadata         Json?           @db.JsonB
+  indexedAt        DateTime?       @map("indexed_at") @db.Timestamptz
+  createdAt        DateTime?       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime?       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  collection Collection      @relation(fields: [collectionId], references: [id])
+  chunks     DocumentChunk[]
+  jobs       IngestionJob[]
+
+  @@map("documents")
+  @@schema("knowledge")
+}
+
+model DocumentChunk {
+  id             String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId     String                       @map("document_id") @db.Uuid
+  chunkIndex     Int                          @map("chunk_index")
+  content        String
+  contentLength  Int                          @map("content_length")
+  tokenCount     Int                          @map("token_count")
+  embedding      Unsupported("vector(1536)")?
+  embeddingModel String?                      @map("embedding_model") @db.VarChar(50)
+  pageNumbers    Int[]                        @map("page_numbers")
+  sectionTitle   String?                      @map("section_title") @db.VarChar(500)
+  chunkType      ChunkType?                   @default(text) @map("chunk_type")
+  metadata       Json?                        @db.JsonB
+  createdAt      DateTime?                    @default(now()) @map("created_at") @db.Timestamptz
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_chunks")
+  @@schema("knowledge")
+}
+
+model IngestionJob {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId       String     @map("document_id") @db.Uuid
+  jobType          JobType    @map("job_type")
+  status           JobStatus? @default(queued)
+  progressPercent  Int?       @default(0) @map("progress_percent")
+  chunksCreated    Int?       @default(0) @map("chunks_created")
+  errorMessage     String?    @map("error_message")
+  startedAt        DateTime?  @map("started_at") @db.Timestamptz
+  completedAt      DateTime?  @map("completed_at") @db.Timestamptz
+  processingTimeMs Int?       @map("processing_time_ms")
+  createdAt        DateTime?  @default(now()) @map("created_at") @db.Timestamptz
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("ingestion_jobs")
+  @@schema("knowledge")
+}
+
+// --- AUDIT MODELS ---
+
+model AuditLog {
+  id            BigInt    @id @default(autoincrement())
+  correlationId String    @map("correlation_id") @db.Uuid
+  userId        String?   @map("user_id") @db.Uuid // Soft link
+  action        String    @db.VarChar(100)
+  resourceType  String?   @map("resource_type") @db.VarChar(50)
+  resourceId    String?   @map("resource_id") @db.Uuid
+  details       Json?     @db.JsonB
+  ipAddress     String?   @map("ip_address") @db.VarChar(45)
+  userAgent     String?   @map("user_agent")
+  channel       String?   @db.VarChar(20)
+  result        String    @default("success") @db.VarChar(20)
+  errorMessage  String?   @map("error_message")
+  createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("audit_logs")
+  @@schema("audit")
+}
+
+model AgentExecutionLog {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId       String?   @map("conversation_id") @db.Uuid // Soft link
+  agentName            String    @map("agent_name") @db.VarChar(100)
+  agentVersion         String?   @map("agent_version") @db.VarChar(20)
+  triggerType          String    @default("webhook") @map("trigger_type") @db.VarChar(20)
+  status               String    @default("success") @db.VarChar(20)
+  inputPayload         Json?     @map("input_payload") @db.JsonB
+  outputPayload        Json?     @map("output_payload") @db.JsonB
+  toolsInvoked         Json?     @map("tools_invoked") @db.JsonB
+  chunksRetrieved      Json?     @map("chunks_retrieved") @db.JsonB
+  chunksUsedInResponse Int?      @map("chunks_used_in_response")
+  llmModel             String?   @map("llm_model") @db.VarChar(50)
+  totalTokens          Int?      @map("total_tokens")
+  promptTokens         Int?      @map("prompt_tokens")
+  completionTokens     Int?      @map("completion_tokens")
+  costUsd              Decimal?  @map("cost_usd") @db.Decimal(10, 6)
+  latencyMs            Int?      @map("latency_ms")
+  n8nExecutionId       String?   @map("n8n_execution_id") @db.VarChar(100)
+  createdAt            DateTime? @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("agent_execution_logs")
+  @@schema("audit")
+}
+
+model TableChangeLog {
+  id        BigInt    @id @default(autoincrement())
+  tableName String    @map("table_name") @db.VarChar(100)
+  recordId  String    @map("record_id") @db.Uuid
+  operation String    @db.VarChar(10)
+  oldData   Json?     @map("old_data") @db.JsonB
+  newData   Json?     @map("new_data") @db.JsonB
+  changedBy String?   @map("changed_by") @db.Uuid // Soft link
+  changedAt DateTime? @default(now()) @map("changed_at") @db.Timestamptz
+
+  @@map("table_change_logs")
+  @@schema("audit")
+}
+
+model SecurityEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  severity    String    @default("low") @db.VarChar(20)
+  eventType   String    @map("event_type") @db.VarChar(50)
+  title       String    @db.VarChar(255)
+  description String?
+  userId      String?   @map("user_id") @db.Uuid // Soft link
+  ipAddress   String?   @map("ip_address") @db.VarChar(45)
+  channel     String?   @db.VarChar(20)
+  metadata    Json?     @db.JsonB
+  status      String?   @default("active") @db.VarChar(20)
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("security_events")
+  @@schema("audit")
+}
+
+// --- AUDIT_MIRROR MODELS ---
+
+model UserMirror {
+  mirrorId        BigInt    @id @default(autoincrement()) @map("mirror_id")
+  mirrorVersion   Int       @map("mirror_version")
+  mirrorOperation String    @map("mirror_operation") @db.VarChar(10)
+  mirrorTimestamp DateTime? @default(now()) @map("mirror_timestamp") @db.Timestamptz
+
+  id                  String?       @db.Uuid
+  employeeCode        String?       @map("employee_code") @db.VarChar(20)
+  documentType        DocumentType? @map("document_type")
+  documentNumber      String?       @map("document_number") @db.VarChar(20)
+  firstName           String?       @map("first_name") @db.VarChar(100)
+  lastName            String?       @map("last_name") @db.VarChar(100)
+  email               String?       @db.VarChar(255)
+  phone               String?       @db.VarChar(20)
+  passwordHash        String?       @map("password_hash") @db.VarChar(255)
+  role                UserRole?
+  position            String?       @db.VarChar(150)
+  status              UserStatus?
+  lastLoginAt         DateTime?     @map("last_login_at") @db.Timestamptz
+  failedLoginAttempts Int?          @map("failed_login_attempts")
+  googleChatId        String?       @map("google_chat_id") @db.VarChar(100)
+  createdAt           DateTime?     @map("created_at") @db.Timestamptz
+  updatedAt           DateTime?     @map("updated_at") @db.Timestamptz
+
+  @@map("users_mirror")
+  @@schema("audit_mirror")
+}
+
+model ConversationMirror {
+  mirrorId        BigInt    @id @default(autoincrement()) @map("mirror_id")
+  mirrorVersion   Int       @map("mirror_version")
+  mirrorOperation String    @map("mirror_operation") @db.VarChar(10)
+  mirrorTimestamp DateTime? @default(now()) @map("mirror_timestamp") @db.Timestamptz
+
+  id           String?             @db.Uuid
+  userId       String?             @map("user_id") @db.Uuid
+  channel      ChannelType?
+  title        String?             @db.VarChar(255)
+  status       ConversationStatus?
+  currentAgent String?             @map("current_agent") @db.VarChar(100)
+  metadata     Json?               @db.JsonB
+  createdAt    DateTime?           @map("created_at") @db.Timestamptz
+  updatedAt    DateTime?           @map("updated_at") @db.Timestamptz
+  closedAt     DateTime?           @map("closed_at") @db.Timestamptz
+
+  @@map("conversations_mirror")
+  @@schema("audit_mirror")
+}
+
+model DocumentMirror {
+  mirrorId        BigInt    @id @default(autoincrement()) @map("mirror_id")
+  mirrorVersion   Int       @map("mirror_version")
+  mirrorOperation String    @map("mirror_operation") @db.VarChar(10)
+  mirrorTimestamp DateTime? @default(now()) @map("mirror_timestamp") @db.Timestamptz
+
+  id               String?         @db.Uuid
+  collectionId     String?         @map("collection_id") @db.Uuid
+  title            String?         @db.VarChar(500)
+  originalFilename String?         @map("original_filename") @db.VarChar(500)
+  fileType         FileType?       @map("file_type")
+  fileSizeBytes    BigInt?         @map("file_size_bytes")
+  filePath         String?         @map("file_path") @db.VarChar(1000)
+  contentHash      String?         @map("content_hash") @db.VarChar(64)
+  totalChunks      Int?            @map("total_chunks")
+  totalPages       Int?            @map("total_pages")
+  ocrRequired      Boolean?        @map("ocr_required")
+  ocrEngine        String?         @map("ocr_engine") @db.VarChar(20)
+  language         String?         @db.VarChar(10)
+  version          Int?
+  status           DocumentStatus?
+  metadata         Json?           @db.JsonB
+  indexedAt        DateTime?       @map("indexed_at") @db.Timestamptz
+  createdAt        DateTime?       @map("created_at") @db.Timestamptz
+  updatedAt        DateTime?       @map("updated_at") @db.Timestamptz
+
+  @@map("documents_mirror")
+  @@schema("audit_mirror")
+}

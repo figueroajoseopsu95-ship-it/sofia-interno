@@ -1,0 +1,201 @@
+{
+  "name": "SOFIA - Main Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sofia-router",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Entrada Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "sofia-router-webhook"
+    },
+    {
+      "parameters": {
+        "agent": "toolsAgent",
+        "promptType": "define",
+        "text": "=Historial de conversación previo:\n{{ $json.history && $json.history.length > 0 ? $json.history.map(h => h.role.toUpperCase() + ': ' + h.content).join('\\n') : '[Sin historial previo]' }}\n\n---\nPregunta del empleado: {{ $json.message }}\n\n[CONTEXTO INTERNO - NO MENCIONAR AL USUARIO]\nconversationId: {{ $json.conversationId }}\nuserId: {{ $json.userId }}\nchannel: {{ $json.channel }}",
+        "options": {
+          "systemMessage": "Eres SOFIA (Smart Omnichannel Financial Intelligence Assistant), la asistente virtual inteligente de Banesco Banco Universal, diseñada para apoyar a los empleados internos.\n\nTu misión es ayudar al personal de Banesco a:\n- Encontrar información sobre productos y servicios bancarios\n- Resolver dudas sobre procedimientos y normativas internas\n- Guiar en flujos de trabajo y políticas de la empresa\n- Proporcionar información de compliance y regulatoria\n\nREGLAS FUNDAMENTALES:\n1. Responde SIEMPRE en español, con tono profesional pero cercano\n2. Sé concisa y precisa — evita respuestas largas innecesarias\n3. Usa la herramienta 'buscar_conocimiento' cuando el usuario pregunte sobre:\n   - Productos bancarios (cuentas, tarjetas, créditos, inversiones)\n   - Procedimientos internos y flujos de trabajo\n   - Normativas, políticas y compliance\n   - Requisitos, tasas o condiciones específicas\n   - Información específica de Banesco\n4. Para saludos, preguntas generales o conversación casual, responde directamente SIN buscar\n5. Si la búsqueda retorna resultados, úsalos para fundamentar tu respuesta y menciona brevemente la fuente\n6. Si no encuentras información relevante, dilo claramente: 'No encontré información específica sobre esto en la base de conocimientos'\n7. NUNCA inventes datos bancarios, tasas, productos o regulaciones específicas\n8. Mantén confidencial el contexto interno (conversationId, userId)",
+          "maxIterations": 5,
+          "returnIntermediateSteps": true
+        }
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "SOFIA AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-haiku-4-5-20251001",
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0.3
+        }
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Modelo Claude Haiku",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [340, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REEMPLAZAR-CON-ID-REAL-DE-CREDENCIAL",
+          "name": "Anthropic - SOFIA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "buscar_conocimiento",
+        "description": "Busca información relevante en la base de conocimientos interna de Banesco Banco Universal usando búsqueda semántica y vectorial (RAG). Retorna fragmentos de documentos internos con su contenido y fuente.\n\nUSA ESTA HERRAMIENTA cuando el empleado pregunte sobre:\n- Productos financieros (cuentas, tarjetas, créditos, préstamos, inversiones, seguros)\n- Procesos y procedimientos internos (apertura de cuenta, otorgamiento de crédito, KYC, etc.)\n- Normativas y regulaciones bancarias (SUDEBAN, BCV, FATF, etc.)\n- Políticas internas de Banesco (compliance, AML, gestión de riesgo, etc.)\n- Requisitos, documentación o condiciones de productos\n- Flujos de trabajo y manuales operativos\n- Cualquier información específica de Banesco\n\nNO uses esta herramienta para saludos, preguntas generales o conversación casual.",
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/api/v1/internal/v1/rag/search/hybrid",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\"query\": \"{query}\", \"topK\": 5}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "query",
+              "description": "La consulta o pregunta específica a buscar en la base de conocimientos. Debe ser descriptiva y específica para obtener mejores resultados. Ejemplo: 'requisitos para apertura de cuenta corriente persona jurídica'"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Buscar Conocimiento RAG",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [620, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =============================================================================\n// SOFIA - Formateador de Respuesta\n// Extrae output del agente y estructura la respuesta para el backend NestJS\n// =============================================================================\n\nconst agentOutput = $input.first().json;\n\n// Obtener el texto de respuesta del agente\nconst responseText = agentOutput.output \n  || agentOutput.text \n  || agentOutput.response \n  || 'Lo siento, no pude generar una respuesta en este momento. Por favor, intenta de nuevo.';\n\n// Extraer herramientas usadas y fuentes de los pasos intermedios\nconst steps = agentOutput.intermediateSteps || [];\nconst sourcesCited = [];\nconst toolsUsed = [];\n\nfor (const step of steps) {\n  try {\n    // Registrar herramienta usada\n    if (step.action && step.action.tool) {\n      if (!toolsUsed.includes(step.action.tool)) {\n        toolsUsed.push(step.action.tool);\n      }\n    }\n    \n    // Extraer fuentes de la herramienta de búsqueda RAG\n    if (step.action && step.action.tool === 'buscar_conocimiento' && step.observation) {\n      let observation = step.observation;\n      \n      // Parsear si es string JSON\n      if (typeof observation === 'string') {\n        observation = JSON.parse(observation);\n      }\n      \n      // Extraer títulos de documentos únicos\n      if (observation && observation.chunks && Array.isArray(observation.chunks)) {\n        for (const chunk of observation.chunks) {\n          const title = chunk.documentTitle || chunk.document_title;\n          if (title && !sourcesCited.includes(title)) {\n            sourcesCited.push(title);\n          }\n        }\n      }\n    }\n  } catch (e) {\n    // Ignorar errores de parseo individuales\n    continue;\n  }\n}\n\n// Estimación de tokens (aproximación: ~3 caracteres por token para español)\nconst approxTokens = Math.ceil(responseText.length / 3);\n\n// Costo aproximado Claude Haiku: ~$0.80 por 1M tokens de salida\nconst approxCostUsd = (approxTokens / 1000000) * 0.80;\n\nreturn [{\n  json: {\n    response: responseText,\n    agentName: 'SofiaMainAgent',\n    sourcesCited: sourcesCited.length > 0 ? sourcesCited : null,\n    toolsUsed: toolsUsed.length > 0 ? toolsUsed : [],\n    tokenCount: approxTokens,\n    modelUsed: 'claude-haiku-4-5-20251001',\n    costUsd: parseFloat(approxCostUsd.toFixed(8)),\n    latencyMs: 0\n  }\n}];"
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Formatear Respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "Responder al Backend",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [980, 300]
+    }
+  ],
+  "connections": {
+    "Entrada Webhook": {
+      "main": [
+        [
+          {
+            "node": "SOFIA AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SOFIA AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Formatear Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder al Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo Claude Haiku": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "SOFIA AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Conocimiento RAG": {
+      "ai_tool": [
+        [
+          {
+            "node": "SOFIA AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "sofia-main-agent-v1",
+  "id": "sofia-main-agent-workflow-001",
+  "tags": [
+    {
+      "name": "SOFIA"
+    },
+    {
+      "name": "Production"
+    }
+  ],
+  "pinData": {}
+}

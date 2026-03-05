@@ -1,0 +1,322 @@
+{
+  "name": "SOFIA - Pasivos Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sofia-pasivos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "pasivos-webhook-001",
+      "name": "Webhook Pasivos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "sofia-pasivos-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-conversationId",
+              "name": "conversationId",
+              "value": "={{ $json.conversationId }}",
+              "type": "string"
+            },
+            {
+              "id": "set-userId",
+              "name": "userId",
+              "value": "={{ $json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "set-message",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "set-channel",
+              "name": "channel",
+              "value": "={{ $json.channel }}",
+              "type": "string"
+            },
+            {
+              "id": "set-historyText",
+              "name": "historyText",
+              "value": "={{ ($json.history || []).map(h => h.role + ': ' + h.content).join('\\n') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pasivos-set-001",
+      "name": "Extraer Datos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/api/v1/internal/v1/rag/search/hybrid",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $('Extraer Datos').item.json.message, collectionCode: 'PP', topK: 5 }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "pasivos-rag-001",
+      "name": "Buscar RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst chunks = data.chunks || [];\nconst ragContext = chunks.length > 0\n  ? chunks.map((c, i) => `[${i+1}] Fuente: ${c.documentTitle || 'Documento'}\\nSección: ${c.sectionTitle || 'N/A'}\\nContenido: ${c.content}\\n`).join('\\n---\\n')\n  : 'No se encontraron documentos relevantes en la base de conocimientos para esta consulta.';\nconst sources = [...new Set(chunks.map(c => c.documentTitle).filter(Boolean))];\nreturn [{ json: { ...($('Extraer Datos').item.json), ragContext, sources, hasRagResults: chunks.length > 0 } }];"
+      },
+      "id": "pasivos-code-001",
+      "name": "Preparar Contexto RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "={{ 'Historial:\\n' + $json.historyText + '\\n\\n---\\nPregunta actual: ' + $json.message }}",
+        "options": {
+          "systemMessage": "Eres el Agente de Pasivos de SOFIA, el asistente inteligente de Banesco Banco Universal. Eres especialista en todos los productos pasivos (captación) de Banesco.\n\nTu dominio incluye:\n- Cuentas de ahorro: tipos, requisitos de apertura, tasas de interés, comisiones\n- Cuentas corrientes: individuales, empresariales, requisitos, beneficios\n- Depósitos a plazo fijo: plazos, tasas, condiciones de cancelación anticipada\n- Cuentas en divisas: USD, EUR, condiciones\n- Certificados de ahorro y depósito\n- Cuentas de nómina y convenios\n- Tasas de interés vigentes\n- Proceso de apertura de cuentas: KYC, documentación requerida\n- Mantenimiento y gestión de cuentas: actualizaciones, bloqueos, cierres\n\nCONTEXTO DE BÚSQUEDA RAG:\n{{ $json.ragContext }}\n\nINSTRUCCIONES:\n1. Responde en español, tono profesional y preciso\n2. Usa el contexto RAG como base de tus respuestas\n3. Para tasas de interés, siempre menciona que están sujetas a cambio y referencia la fuente\n4. Para apertura de cuentas, detalla los requisitos paso a paso cuando tengas la información\n5. NUNCA inventes tasas, montos mínimos o requisitos específicos sin soporte en el RAG",
+          "maxIterations": 3,
+          "returnIntermediateSteps": false
+        }
+      },
+      "id": "pasivos-agent-001",
+      "name": "Agente IA",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "options": {
+          "maxTokens": 2048,
+          "temperature": 0.3
+        }
+      },
+      "id": "pasivos-claude-001",
+      "name": "Modelo Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1000,
+        520
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REEMPLAZAR-CON-ID-CREDENCIAL",
+          "name": "Anthropic - SOFIA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/api/v1/internal/v1/agents/log-execution",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Datos').item.json.conversationId, agentName: 'PasivosAgent', agentVersion: '1.0.0', status: 'success', inputPayload: { message: $('Extraer Datos').item.json.message }, outputPayload: { response: $('Agente IA').item.json.output || '' }, llmModel: 'claude-sonnet-4-6', totalTokens: Math.ceil(($('Agente IA').item.json.output || '').length / 3), promptTokens: Math.ceil($('Extraer Datos').item.json.message.length / 3), completionTokens: Math.ceil(($('Agente IA').item.json.output || '').length / 3), latencyMs: 0 }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "pasivos-log-001",
+      "name": "Registrar Ejecución",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentOut = $('Agente IA').item.json.output || 'No pude procesar tu solicitud. Por favor, intenta de nuevo.';\nconst sources = $('Preparar Contexto RAG').item.json.sources || [];\nconst approxTokens = Math.ceil(agentOut.length / 3);\nreturn [{ json: { response: agentOut, agentName: 'PasivosAgent', sourcesCited: sources.length > 0 ? sources : null, tokenCount: approxTokens, modelUsed: 'claude-sonnet-4-6', costUsd: parseFloat((approxTokens / 1000000 * 3.0).toFixed(8)), latencyMs: 0 } }];"
+      },
+      "id": "pasivos-format-001",
+      "name": "Formatear Respuesta Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Formatear Respuesta Final').item.json) }}",
+        "options": {}
+      },
+      "id": "pasivos-respond-001",
+      "name": "Responder al Router",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Pasivos": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos": {
+      "main": [
+        [
+          {
+            "node": "Buscar RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar RAG": {
+      "main": [
+        [
+          {
+            "node": "Preparar Contexto RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Contexto RAG": {
+      "main": [
+        [
+          {
+            "node": "Agente IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente IA": {
+      "main": [
+        [
+          {
+            "node": "Registrar Ejecución",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Formatear Respuesta Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Respuesta Final": {
+      "main": [
+        [
+          {
+            "node": "Responder al Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente IA",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8",
+  "tags": [
+    {
+      "name": "SOFIA"
+    },
+    {
+      "name": "Pasivos"
+    },
+    {
+      "name": "Specialist"
+    }
+  ],
+  "pinData": {}
+}

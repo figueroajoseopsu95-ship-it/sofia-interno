@@ -1,0 +1,12 @@
+export enum AgentName {
+    ROUTER = 'ROUTER',
+    PSD = 'PSD',
+    PASIVOS = 'PASIVOS',
+    ATC = 'ATC',
+    FINANZAS = 'FINANZAS',
+    COMERCIAL = 'COMERCIAL',
+    LEGAL = 'LEGAL',
+    RAG_ENGINE = 'RAG_ENGINE',
+    ESCALATION = 'ESCALATION',
+    FEEDBACK_ANALYZER = 'FEEDBACK_ANALYZER',
+}

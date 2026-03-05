@@ -1,0 +1,84 @@
+services:
+  sofia-postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: sofia_user
+      POSTGRES_PASSWORD: sofia_dev_password_2026
+      POSTGRES_DB: sofia_db
+    volumes:
+      - sofia_pgdata:/var/lib/postgresql/data
+      - ./prisma/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - sofia-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U sofia_user -d sofia_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sofia-redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass sofia_redis_dev_2026
+    networks:
+      - sofia-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sofia-n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      # Persistencia en Postgres
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_DATABASE: sofia_n8n_db
+      DB_POSTGRESDB_HOST: sofia-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_USER: sofia_user
+      DB_POSTGRESDB_PASSWORD: sofia_dev_password_2026
+      # Autenticación n8n
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: admin
+      N8N_BASIC_AUTH_PASSWORD: sofia_n8n_dev_2026
+      # URL pública de n8n (para webhooks)
+      WEBHOOK_URL: "http://localhost:5678/"
+      N8N_HOST: "0.0.0.0"
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: "http"
+      # Clave interna compartida con el backend NestJS
+      # DEBE coincidir con INTERNAL_API_KEY en .env.development
+      INTERNAL_API_KEY: "sofia-internal-dev-key-2026-change-in-prod"
+      # Permitir que nodos lean $env.* en expresiones (default en n8n 2.x es bloqueado).
+      # Requerido para que los HTTP Request nodes lean $env.INTERNAL_API_KEY en headers.
+      # En producción, considerar migrar a n8n Credentials en lugar de $env.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # Permitir acceso a variables de entorno en expresiones n8n
+      N8N_COMMUNITY_EDITION_FEATURES_ENABLED: "true"
+      EXECUTIONS_PROCESS: "main"
+      N8N_LOG_LEVEL: "info"
+    depends_on:
+      sofia-postgres:
+        condition: service_healthy
+    volumes:
+      - sofia_n8n_data:/home/node/.n8n
+      - ./n8n-workflows:/home/node/workflows:ro
+    networks:
+      - sofia-network
+    extra_hosts:
+      # Permite que n8n alcance el backend NestJS en el host (Windows/Mac)
+      - "host.docker.internal:host-gateway"
+
+networks:
+  sofia-network:
+    driver: bridge
+
+volumes:
+  sofia_pgdata:
+  sofia_n8n_data:

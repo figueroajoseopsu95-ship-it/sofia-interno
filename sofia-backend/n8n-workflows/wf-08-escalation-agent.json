@@ -1,0 +1,231 @@
+{
+  "name": "SOFIA - Escalation Agent",
+  "active": true,
+  "tags": [
+    {
+      "name": "SOFIA"
+    },
+    {
+      "name": "Escalation"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "08-node-001",
+      "name": "Webhook Escalation",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sofia-escalation",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "08-node-002",
+      "name": "Extraer Datos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "conversationId",
+              "value": "={{ $json.conversationId }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "userId",
+              "value": "={{ $json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "channel",
+              "value": "={{ $json.channel }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "08-node-003",
+      "name": "Registrar Caso de Escalamiento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/api/v1/internal/v1/agents/log-execution",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-API-Key",
+              "value": "={{ $env.INTERNAL_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversationId: $('Extraer Datos').item.json.conversationId, agentName: 'EscalationAgent', agentVersion: '1.0.0', status: 'escalated', inputPayload: { message: $('Extraer Datos').item.json.message }, outputPayload: { escalated: true, reason: 'Requiere atención humana' }, llmModel: 'none', totalTokens: 0, latencyMs: 0 }) }}",
+        "options": {
+          "timeout": 8000
+        }
+      }
+    },
+    {
+      "id": "08-node-004",
+      "name": "Preparar Respuesta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "response",
+              "value": "={{ 'Tu consulta ha sido registrada para atención especializada. Un supervisor o especialista de Banesco se contactará contigo en breve. Tu número de referencia es: ' + $('Extraer Datos').item.json.conversationId.slice(0,8).toUpperCase() + '. Lamentamos los inconvenientes.' }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "agentName",
+              "value": "EscalationAgent",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "sourcesCited",
+              "value": "={{ null }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "tokenCount",
+              "value": "={{ 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "5",
+              "name": "modelUsed",
+              "value": "none",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "costUsd",
+              "value": "={{ 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "7",
+              "name": "latencyMs",
+              "value": "={{ 0 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "08-node-005",
+      "name": "Responder al Router",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1060,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Escalation": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos": {
+      "main": [
+        [
+          {
+            "node": "Registrar Caso de Escalamiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Caso de Escalamiento": {
+      "main": [
+        [
+          {
+            "node": "Preparar Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder al Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c9d0e1f2-a3b4-4c5d-6e7f-a8b9c0d1e2f3"
+}
