@@ -7,41 +7,30 @@ CONF_DIR="/etc/nginx/conf.d"
 
 mkdir -p "$SSL_DIR"
 
-# Check for Let's Encrypt certificates (any domain)
-LE_CERT=""
+# Check for REAL Let's Encrypt certificates (any domain)
+LE_FOUND=false
 if [ -d "$LE_DIR" ]; then
     for dir in "$LE_DIR"/*/; do
         if [ -f "${dir}fullchain.pem" ] && [ -f "${dir}privkey.pem" ]; then
-            LE_CERT="$dir"
+            echo "=== Found Let's Encrypt certificates in $dir ==="
+            ln -sf "${dir}fullchain.pem" "$SSL_DIR/cert.pem"
+            ln -sf "${dir}privkey.pem" "$SSL_DIR/key.pem"
+            LE_FOUND=true
             break
         fi
     done
 fi
 
-if [ -n "$LE_CERT" ]; then
-    echo "=== Using Let's Encrypt certificates from $LE_CERT ==="
-    ln -sf "${LE_CERT}fullchain.pem" "$SSL_DIR/cert.pem"
-    ln -sf "${LE_CERT}privkey.pem" "$SSL_DIR/key.pem"
-elif [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
-    echo "=== Using existing SSL certificates ==="
-else
-    echo "=== Generating self-signed SSL certificate ==="
-    DOMAIN="${NGINX_HOST:-localhost}"
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/key.pem" \
-        -out "$SSL_DIR/cert.pem" \
-        -subj "/CN=$DOMAIN" 2>/dev/null
-fi
-
-# If SSL certs are available, use the HTTPS config
-if [ -f "$SSL_DIR/cert.pem" ]; then
-    echo "=== Enabling HTTPS configuration ==="
+if [ "$LE_FOUND" = true ]; then
+    # Real Let's Encrypt certs: enable HTTPS with HTTP->HTTPS redirect
     NGINX_HOST="${NGINX_HOST:-_}"
     export NGINX_HOST
     envsubst '${NGINX_HOST}' < /etc/nginx/ssl.conf.template > "$CONF_DIR/default.conf"
-    echo "=== HTTPS enabled for $NGINX_HOST ==="
+    echo "=== HTTPS enabled with redirect for $NGINX_HOST ==="
 else
-    echo "=== Running HTTP only ==="
+    # No real certs: keep HTTP-only config (default.conf stays as-is)
+    echo "=== Running HTTP only (no SSL redirect) ==="
+    echo "=== Run certbot to enable HTTPS ==="
 fi
 
 echo "=== Starting nginx ==="
