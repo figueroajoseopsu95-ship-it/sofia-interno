@@ -5,6 +5,9 @@
 # --- Stage 1: Install dependencies ---
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
+# Install openssl BEFORE npm ci so Prisma postinstall detects OpenSSL 3.x
+# and downloads the correct engine binary (debian-openssl-3.0.x)
+RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci
 
