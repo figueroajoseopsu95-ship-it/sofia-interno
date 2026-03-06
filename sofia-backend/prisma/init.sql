@@ -1,8 +1,7 @@
--- 1. Crear base de datos sofia_n8n_db para n8n
-SELECT 'CREATE DATABASE sofia_n8n_db OWNER sofia_user'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sofia_n8n_db')\gexec
+-- Nota: La base de datos sofia_n8n_db se crea mediante create-n8n-db.sh
+-- que se ejecuta antes que este script en docker-entrypoint-initdb.d/
 
--- 2. Extensiones (en sofia_db)
+-- 1. Extensiones (en sofia_db)
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
