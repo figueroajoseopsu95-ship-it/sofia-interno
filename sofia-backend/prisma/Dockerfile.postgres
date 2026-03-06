@@ -1,0 +1,4 @@
+FROM pgvector/pgvector:pg16
+COPY create-n8n-db.sh /docker-entrypoint-initdb.d/00-create-n8n-db.sh
+COPY init.sql /docker-entrypoint-initdb.d/01-init.sql
+RUN chmod +x /docker-entrypoint-initdb.d/00-create-n8n-db.sh

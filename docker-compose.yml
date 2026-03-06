@@ -2,7 +2,7 @@
 # SOFIA — Production Docker Compose
 # ============================================
 # Uso:
-#   1. Copiar .env.production.example → .env
+#   1. Copiar .env.example → .env
 #   2. Completar las variables en .env
 #   3. docker compose up -d --build
 # ============================================
@@ -10,7 +10,9 @@
 services:
   # ---- PostgreSQL + pgvector ----
   sofia-postgres:
-    image: pgvector/pgvector:pg16
+    build:
+      context: ./sofia-backend/prisma
+      dockerfile: Dockerfile.postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -18,8 +20,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - sofia_pgdata:/var/lib/postgresql/data
-      - ./sofia-backend/prisma/create-n8n-db.sh:/docker-entrypoint-initdb.d/00-create-n8n-db.sh
-      - ./sofia-backend/prisma/init.sql:/docker-entrypoint-initdb.d/01-init.sql
     networks:
       - sofia-network
     healthcheck:
@@ -102,7 +102,6 @@ services:
         condition: service_healthy
     volumes:
       - sofia_n8n_data:/home/node/.n8n
-      - ./sofia-backend/n8n-workflows:/home/node/workflows:ro
     networks:
       - sofia-network
 
@@ -135,12 +134,12 @@ services:
 
   # ---- Nginx Reverse Proxy ----
   sofia-nginx:
-    image: nginx:alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "80:80"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - sofia-frontend
       - sofia-backend

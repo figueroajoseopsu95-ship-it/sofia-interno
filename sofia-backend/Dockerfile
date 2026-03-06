@@ -15,6 +15,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
 RUN npm run build
+# Verify build output exists
+RUN test -f dist/main.js || (echo "ERROR: dist/main.js not found after build" && ls -la dist/ 2>/dev/null && exit 1)
 
 # --- Stage 3: Production ---
 FROM node:20-alpine AS runner
@@ -30,5 +32,4 @@ COPY --from=builder /app/prisma ./prisma
 
 EXPOSE 4000
 
-# Use tsconfig-paths/register to resolve path aliases at runtime
-CMD ["node", "-r", "tsconfig-paths/register", "dist/main"]
+CMD ["node", "dist/main.js"]
