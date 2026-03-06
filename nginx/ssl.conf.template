@@ -1,40 +1,52 @@
-upstream frontend {
+upstream frontend_ssl {
     server sofia-frontend:3000;
 }
 
-upstream backend {
+upstream backend_ssl {
     server sofia-backend:4000;
 }
 
-# --------------------------------------------------
-# HTTP server (port 80)
-# Serves certbot challenge + redirects to HTTPS if certs exist
-# --------------------------------------------------
 server {
     listen 80;
-    server_name _;
-
-    client_max_body_size 50M;
+    server_name ${NGINX_HOST};
 
     # Certbot ACME challenge
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
 
-    # Backend API  (/api/*)
+    # Redirect all HTTP to HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${NGINX_HOST};
+
+    ssl_certificate     /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    client_max_body_size 50M;
+
+    # Backend API
     location /api/ {
-        proxy_pass         http://backend;
+        proxy_pass         http://backend_ssl;
         proxy_set_header   Host $host;
         proxy_set_header   X-Real-IP $remote_addr;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto https;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
     }
 
-    # WebSocket — Socket.IO  (/socket.io/*)
+    # WebSocket — Socket.IO
     location /socket.io/ {
-        proxy_pass         http://backend;
+        proxy_pass         http://backend_ssl;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade $http_upgrade;
         proxy_set_header   Connection "upgrade";
@@ -43,30 +55,22 @@ server {
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    # n8n webhooks (external — Google Chat, etc.)
+    # n8n webhooks
     location /webhook/ {
         proxy_pass         http://sofia-n8n:5678;
         proxy_set_header   Host $host;
         proxy_set_header   X-Real-IP $remote_addr;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto https;
         proxy_read_timeout 120s;
     }
 
-    # Frontend — Next.js (default catch-all)
+    # Frontend — Next.js (catch-all)
     location / {
-        proxy_pass         http://frontend;
+        proxy_pass         http://frontend_ssl;
         proxy_set_header   Host $host;
         proxy_set_header   X-Real-IP $remote_addr;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto https;
     }
 }
-
-# --------------------------------------------------
-# HTTPS server (port 443) — activado por entrypoint.sh
-# Solo se incluye si existen los certificados SSL
-# --------------------------------------------------
-# NOTA: Este bloque se habilita automaticamente por el
-# entrypoint cuando los certificados SSL existen.
-# Ver nginx/ssl.conf.template
