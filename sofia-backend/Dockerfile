@@ -3,13 +3,13 @@
 # ============================================
 
 # --- Stage 1: Install dependencies ---
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -19,7 +19,7 @@ RUN npm run build
 RUN test -f dist/main.js || (echo "ERROR: dist/main.js not found after build" && ls -la dist/ 2>/dev/null && exit 1)
 
 # --- Stage 3: Production ---
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
