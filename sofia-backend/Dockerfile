@@ -3,14 +3,15 @@
 # ============================================
 
 # --- Stage 1: Install dependencies ---
-FROM node:20-slim AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
 # --- Stage 2: Build ---
-FROM node:20-slim AS builder
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
+RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
@@ -19,9 +20,10 @@ RUN npm run build
 RUN test -f dist/main.js || (echo "ERROR: dist/main.js not found after build" && ls -la dist/ 2>/dev/null && exit 1)
 
 # --- Stage 3: Production ---
-FROM node:20-slim AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Only copy what's needed for production
 COPY --from=builder /app/dist ./dist
