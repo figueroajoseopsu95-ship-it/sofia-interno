@@ -45,8 +45,10 @@ import { ControlCenterModule } from './modules/control-center/control-center.mod
             imports: [ConfigModule],
             useFactory: async (configService: ConfigService) => ({
                 store: redisStore,
-                host: configService.get<string>('REDIS_HOST', 'localhost'),
-                port: configService.get<number>('REDIS_PORT', 6379),
+                socket: {
+                    host: configService.get<string>('REDIS_HOST', 'localhost'),
+                    port: configService.get<number>('REDIS_PORT', 6379),
+                },
                 password: configService.get<string>('REDIS_PASSWORD'),
                 ttl: 60000,
             }),
