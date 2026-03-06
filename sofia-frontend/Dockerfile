@@ -20,6 +20,7 @@ ARG NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 
+RUN mkdir -p public
 RUN npm run build
 
 # --- Stage 3: Production ---
